@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Force Sync XAMPP to Turso</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; max-width: 600px; margin: 0 auto; background: #f8fafc; color: #334155; }
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); text-align: center; }
+        h1 { color: #0f172a; margin-top: 0; }
+        button { background: #059669; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: background 0.2s; width: 100%; }
+        button:hover { background: #047857; }
+        button:disabled { background: #94a3b8; cursor: not-allowed; }
+        #log { margin-top: 20px; text-align: left; background: #f1f5f9; padding: 15px; border-radius: 8px; font-family: monospace; font-size: 13px; height: 200px; overflow-y: auto; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>☁️ Force Sync to Turso</h1>
+        <p>Use this tool if you manually imported data (like sales or products) into XAMPP and need to push it up to the Turso cloud database.</p>
+        <button id="syncBtn" onclick="startSync()">Push All Data to Turso</button>
+        <div id="log">Ready to sync...</div>
+    </div>
+
+    <script>
+        function log(msg) {
+            const el = document.getElementById('log');
+            el.innerHTML += `\n> ${msg}`;
+            el.scrollTop = el.scrollHeight;
+        }
+
+        async function startSync() {
+            const btn = document.getElementById('syncBtn');
+            btn.disabled = true;
+            btn.innerText = "Syncing... Please wait";
+            log("Starting sync process...");
+
+            try {
+                // 1. Get credentials from POS localStorage
+                const sessionStr = localStorage.getItem("db_session") || localStorage.getItem("sb_settings");
+                if (!sessionStr) {
+                    throw new Error("Turso credentials not found in localStorage. Please log into the POS and connect to cloud first.");
+                }
+                const { url, token } = JSON.parse(sessionStr);
+                if (!url || !token) throw new Error("Invalid Turso credentials in localStorage.");
+
+                // 2. Fetch all XAMPP data
+                log("Pulling data from local XAMPP database...");
+                const pullRes = await fetch("/pos/xampp-api/pull.php", { method: "POST" });
+                const pullData = await pullRes.json();
+
+                if (!pullData.ok || !pullData.data) {
+                    throw new Error("Failed to read from XAMPP database.");
+                }
+
+                log("Successfully pulled data. Pushing tables to Turso...");
+                let success = true;
+
+                // 3. Push to Turso
+                const apiUrl = url.replace(/\\/$/, "") + "/api/sync";
+                
+                for (const [table, rows] of Object.entries(pullData.data)) {
+                    if (!rows) continue;
+                    const arr = Array.isArray(rows) ? rows.filter(Boolean) : [rows].filter(Boolean);
+                    if (arr.length === 0) {
+                        log(`Skipping empty table: ${table}`);
+                        continue;
+                    }
+
+                    log(`Pushing ${arr.length} records to [${table}]...`);
+                    const syncRes = await fetch(apiUrl, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ url, token, key: table, value: JSON.stringify(arr) })
+                    });
+
+                    if (!syncRes.ok) {
+                        log(`❌ Failed to push [${table}]`);
+                        success = false;
+                    } else {
+                        log(`✅ Successfully pushed [${table}]`);
+                    }
+                }
+
+                if (success) {
+                    log("🎉 Sync Complete! All data is now in Turso.");
+                    alert("Push complete! All your XAMPP data is now in Turso.");
+                } else {
+                    log("⚠️ Sync finished with some errors.");
+                    alert("Sync partially completed with errors. Check logs.");
+                }
+
+            } catch (err) {
+                log(`❌ Error: ${err.message}`);
+                alert("Error: " + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "Push All Data to Turso";
+            }
+        }
+    </script>
+</body>
+</html>
